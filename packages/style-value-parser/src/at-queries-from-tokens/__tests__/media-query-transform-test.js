@@ -78,6 +78,28 @@ describe('Media Query Transformer', () => {
     expect(result).toEqual(expectedStyles);
   });
 
+  test('handles comma-separated (or) media queries', () => {
+    const originalStyles = stylex.create({
+      container: {
+        default: 'width: 100%',
+        '@media screen, (max-width: 800px)': 'width: 80%',
+        '@media (max-width: 500px)': 'width: 60%',
+      },
+    });
+
+    const expectedStyles = {
+      container: {
+        default: 'width: 100%',
+        '@media screen and (not (max-width: 500px)), (max-width: 800px) and (not (max-width: 500px))':
+          'width: 80%',
+        '@media (max-width: 500px)': 'width: 60%',
+      },
+    };
+
+    const result = transformMediaQueryStyles(originalStyles);
+    expect(result).toEqual(expectedStyles);
+  });
+
   test('combination of keywords and rules', () => {
     const originalStyles = stylex.create({
       container: {
@@ -92,7 +114,7 @@ describe('Media Query Transformer', () => {
         default: 'width:100%',
         '@media screen and (min-width: 900px) and (not (print and (max-width: 500px)))':
           'width:80%',
-        '@media print and (max-width: 500px)': 'width:50%',
+        '@media (print and (max-width: 500px))': 'width:50%',
       },
     };
 

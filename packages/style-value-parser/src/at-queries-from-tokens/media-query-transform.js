@@ -17,6 +17,7 @@ import {
   OrSeparatedMediaRules,
 } from './media-query';
 
+/** ensures last media query overrides by negating subsequent queries */
 export function applyLastMediaQueryWins(mediaQuery: MediaQuery): MediaQuery {
   const queries = mediaQuery.queries.queries;
 
@@ -24,12 +25,16 @@ export function applyLastMediaQueryWins(mediaQuery: MediaQuery): MediaQuery {
     return mediaQuery;
   }
 
-  const transformedQueries = new Array<
-    MediaQueryKeywords | MediaRule | NotMediaRule | AndSeparatedMediaRules,
-  >(queries.length);
+  const transformedQueries: Array<
+    | MediaQuery
+    | MediaRule
+    | MediaQueryKeywords
+    | NotMediaRule
+    | AndSeparatedMediaRules,
+  > = new Array(queries.length);
   const negations: Array<MediaQuery | MediaRule> = [];
 
-  // iterate in reverse for single pass
+  // iterate backwards for single pass
   for (let i = queries.length - 1; i >= 0; i--) {
     const isLastQuery = i === queries.length - 1;
     const current = queries[i];
@@ -49,9 +54,13 @@ export function applyLastMediaQueryWins(mediaQuery: MediaQuery): MediaQuery {
       );
 
       transformedQueries[i] = new MediaRule(
-        new OrSeparatedMediaRules([wrappedCurrent, ...negatedRules]),
+        new OrSeparatedMediaRules([
+          wrappedCurrent,
+          ...negatedRules.filter((rule) => rule instanceof MediaRule),
+        ]),
       );
     }
+
     negations.push(current);
   }
 
@@ -59,6 +68,35 @@ export function applyLastMediaQueryWins(mediaQuery: MediaQuery): MediaQuery {
   return new MediaQuery(newOrSeparatedRules);
 }
 
+function stripOuterParens(str: string): string {
+  const trimmed = str.trim();
+  if (trimmed.startsWith('(') && trimmed.endsWith(')')) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+/**
+ * transformCommaSeparated:
+ * splits a media query on commas and adds negation to each part then rejoins parts with comma
+ */
+function transformCommaSeparated(
+  fullQueryNoPrefix: string,
+  negation?: string,
+): string {
+  const parts = fullQueryNoPrefix.split(',');
+  const transformedParts = parts.map((part) => {
+    const stripped = stripOuterParens(part);
+    if (!negation) {
+      return `(${stripped})`;
+    }
+    return `${part} and ${negation}`;
+  });
+
+  return transformedParts.join(',');
+}
+
+/** transforms media query styles so the last query wins */
 export function transformMediaQueryStyles(
   styles: Record<string, any>,
 ): Record<string, any> {
@@ -77,29 +115,31 @@ export function transformMediaQueryStyles(
 
       for (let i = 0; i < mediaQueries.length; i++) {
         const currentQuery = mediaQueries[i];
+        const fullQueryNoPrefix = currentQuery.replace('@media', '').trim();
 
-        const buildNegation = (str: string) => {
-          let replaced = str.replace('@media ', '').trim();
-          if (replaced.startsWith('(') && replaced.endsWith(')')) {
-            replaced = replaced.slice(1, -1).trim();
-          }
-          return `(not (${replaced}))`;
-        };
-
-        const negations = mediaQueries
+        const negationStr = mediaQueries
           .slice(i + 1)
-          .map((q) => buildNegation(q))
+          .map((sub) => {
+            const subNoPrefix = sub.replace('@media', '').trim();
+            const subParts = subNoPrefix.split(',').map((p) => {
+              const stripped = stripOuterParens(p);
+              return `(not (${stripped}))`;
+            });
+            return subParts.join(' and ');
+          })
+          .filter((p) => p.length > 0)
           .join(' and ');
 
-        const transformedQuery = negations
-          ? `${currentQuery} and ${negations}`
-          : currentQuery;
+        const finalQuery = negationStr
+          ? `@media ${transformCommaSeparated(fullQueryNoPrefix, negationStr)}`
+          : `@media ${transformCommaSeparated(fullQueryNoPrefix)}`;
 
-        transformedMediaQueries[transformedQuery] = styles[key][currentQuery];
+        transformedMediaQueries[finalQuery] = styles[key][currentQuery];
       }
 
       transformedStyles[key] = {
-        ...defaultValues.reduce((acc, val) => {
+        // merge defaults
+        ...defaultValues.reduce((acc: Record<string, any>, val) => {
           acc[val] = styles[key][val];
           return acc;
         }, {}),
